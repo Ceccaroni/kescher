@@ -219,7 +219,7 @@ function typeAccent(type) {
 function ticketNode(t, done) {
   const node = document.createElement('article');
   node.className = 'ticket';
-  node.style.setProperty('--accent', typeAccent(t.type));
+  node.style.setProperty('--accent-bar', typeAccent(t.type));
 
   const thumbs = (t.images || []).slice(0, 4).map((img) => {
     const url = URL.createObjectURL(img.blob); listUrls.push(url);

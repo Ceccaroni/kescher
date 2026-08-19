@@ -10,11 +10,12 @@ os.makedirs(OUT, exist_ok=True)
 
 SS = 4  # Supersampling fuer knackige Kanten
 
-BG_TOP = (26, 26, 30)
-BG_BOT = (14, 14, 16)
-AMBER = (245, 196, 81)
-AMBER_HI = (255, 216, 120)
-INK = (232, 228, 218)
+# Türkis-Grund, cremefarbene Rahmen (Variablennamen aus Historie beibehalten)
+BG_TOP = (34, 201, 182)      # helles Türkis
+BG_BOT = (10, 122, 113)      # tiefes Türkis
+AMBER = (251, 247, 238)      # Rahmen-Ecken (creme)
+AMBER_HI = (255, 255, 255)   # oberste Notiz-Zeile (weiss)
+INK = (240, 233, 214)        # gedämpfte Notiz-Zeilen (creme)
 
 
 def vgrad(size, top, bot):
