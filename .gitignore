@@ -1,0 +1,10 @@
+# erfasste Inhalte gehören nicht ins App-Repo
+inbox/
+
+# Font-Zwischendateien (die woff2 + fonts.css bleiben eingecheckt für Offline)
+fonts/google.css
+fonts/urls.txt
+
+# macOS / Tooling
+.DS_Store
+node_modules/

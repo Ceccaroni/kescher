@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Kescher — Idea Inbox</title>
+  <meta name="theme-color" content="#0f0f11" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="fonts/fonts.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+
+  <!-- selas Bildmarke als wiederverwendbares Symbol -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="selas-mark" viewBox="0 0 292 336">
+      <path d="M84.492,27.965C97.316,28.513 115.774,27.593 120.866,47.397C127.478,73.112 91.654,109.504 111.95,158.324C127.25,195.126 138.098,200.036 113.751,275.581C108.537,291.758 104.35,302.451 64.553,298.075C61.909,297.785 43.234,295.731 39.222,276.554C38.997,275.477 38.792,52.661 39.325,50.459C45.352,25.587 67.688,28.141 84.492,27.965Z"/>
+      <path d="M204.499,28.041C220.372,28.126 239.946,26.29 247.463,47.513C248.538,50.547 248.418,50.622 248.418,230.5C248.418,278.692 249.735,280.236 241.001,290.037C227.709,304.953 181.515,297.004 178.611,295.298C152.753,280.112 173.803,254.302 181.01,231.356C195.235,186.064 178.627,166.615 167.777,144.371C150.814,109.593 164.018,43.167 171.923,32.841C173.524,30.749 175.782,27.8 204.499,28.041Z"/>
+    </symbol>
+  </svg>
+
+  <div class="app">
+    <div class="maker-bar">
+      <span class="maker" title="gebaut von SELAS">
+        <svg class="selas-mark" viewBox="0 0 292 336" aria-hidden="true"><use href="#selas-mark"/></svg>
+        <span class="maker-word">SELAS</span>
+      </span>
+    </div>
+
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-mark" src="icons/icon-192.png" alt="" width="34" height="34" />
+        <div class="brand-text">
+          <span class="brand-name">Kescher</span>
+          <span class="brand-sub">idea&nbsp;inbox</span>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <button id="connectBtn" class="folder-chip" type="button">
+          <span class="dot" id="folderDot"></span>
+          <span id="folderLabel">Ordner verbinden</span>
+        </button>
+        <button id="flushBtn" class="btn-primary" type="button" disabled>
+          <span class="flush-arrow">→</span> in Inbox schreiben
+          <span class="count-pill" id="flushCount">0</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="main">
+      <!-- COMPOSER -->
+      <section class="composer" id="composer">
+        <div class="composer-glow" aria-hidden="true"></div>
+        <div class="composer-inner">
+          <div class="composer-top">
+            <input id="titleInput" class="title-input" type="text"
+                   placeholder="Was ist die Idee?" autocomplete="off" spellcheck="true" />
+            <div class="type-chips" id="typeChips" role="group" aria-label="Typ">
+              <button class="chip" data-type="idea" type="button">Idee</button>
+              <button class="chip" data-type="feature" type="button">Feature</button>
+              <button class="chip" data-type="bug" type="button">Bug</button>
+              <button class="chip" data-type="task" type="button">Task</button>
+            </div>
+          </div>
+
+          <textarea id="bodyInput" class="body-input"
+                    placeholder="Details, Kontext, Akzeptanzkriterien … (optional)"
+                    rows="3"></textarea>
+
+          <div class="drop" id="drop" tabindex="0" role="button"
+               aria-label="Screenshot einfügen oder anhängen">
+            <div class="drop-hint" id="dropHint">
+              <span class="kbdset"><kbd>⌘</kbd><kbd>V</kbd></span>
+              <span>Screenshot einfügen · oder Bild hierher ziehen · oder klicken</span>
+            </div>
+            <div class="thumbs" id="thumbs"></div>
+            <input type="file" id="fileInput" accept="image/*" multiple hidden />
+          </div>
+
+          <div class="composer-actions">
+            <span class="hint" id="editHint" hidden>Bearbeiten — <button class="link" id="cancelEdit" type="button">abbrechen</button></span>
+            <span class="hint kbd-hint"><kbd>⌘</kbd><kbd>↵</kbd> erfassen</span>
+            <button id="addBtn" class="btn-primary" type="button">Erfassen</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- STACK -->
+      <section class="stack">
+        <div class="stack-head">
+          <h2>Gesammelt</h2>
+          <span class="stack-count" id="openCount">0</span>
+        </div>
+        <div class="list" id="list"></div>
+        <div class="empty" id="emptyState">
+          <div class="empty-frame">[ &nbsp; ]</div>
+          <p>Noch nichts im Kescher.<br />Tippe eine Idee, drück <kbd>⌘</kbd><kbd>V</kbd> für den Screenshot.</p>
+        </div>
+
+        <div class="done-wrap" id="doneWrap" hidden>
+          <button class="done-toggle" id="doneToggle" type="button">
+            <span class="chev">▸</span> Geschrieben <span class="done-count" id="doneCount">0</span>
+          </button>
+          <div class="done-list" id="doneList" hidden></div>
+          <button class="link clear-done" id="clearDone" type="button" hidden>geschriebene aus der App entfernen</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-foot">
+      <span class="foot-made">gebaut von</span>
+      <svg class="selas-mark" viewBox="0 0 292 336" aria-hidden="true"><use href="#selas-mark"/></svg>
+      <span class="foot-brand">SELAS</span>
+      <span class="foot-dot">·</span>
+      <span class="foot-prod">Kescher — Idea Inbox</span>
+    </footer>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

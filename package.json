@@ -1,0 +1,11 @@
+{
+  "name": "kescher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Idea Inbox — Ideen & Tickets mit Screenshots erfassen, als lokale Markdown-Inbox für Claude Code.",
+  "scripts": {
+    "start": "python3 -m http.server 4177",
+    "serve": "python3 -m http.server 4177",
+    "icons": "python3 tools/make_icons.py"
+  }
+}
