@@ -95,6 +95,7 @@ let rootHandle = null;
 let connected = false;
 let draftUrls = [];
 let listUrls = [];
+let selected = new Set();   // IDs ausgewählter offener Tickets
 
 /* ---------- Elemente ---------- */
 const el = {
@@ -103,7 +104,7 @@ const el = {
   addBtn: $('#addBtn'), editHint: $('#editHint'), cancelEdit: $('#cancelEdit'),
   list: $('#list'), empty: $('#emptyState'), openCount: $('#openCount'),
   connectBtn: $('#connectBtn'), folderChip: $('#connectBtn'), folderLabel: $('#folderLabel'),
-  flushBtn: $('#flushBtn'), flushCount: $('#flushCount'),
+  flushBtn: $('#flushBtn'), flushCount: $('#flushCount'), flushLabel: $('#flushLabel'),
   doneWrap: $('#doneWrap'), doneToggle: $('#doneToggle'), doneList: $('#doneList'),
   doneCount: $('#doneCount'), clearDone: $('#clearDone'), toast: $('#toast'),
 };
@@ -251,9 +252,28 @@ function ticketNode(t, done) {
     editB.addEventListener('click', (e) => { e.stopPropagation(); loadForEdit(t.id); });
     delB.addEventListener('click', (e) => { e.stopPropagation(); deleteTicket(t.id, node); });
     node.appendChild(actions);
-    node.addEventListener('click', () => loadForEdit(t.id));
+    node.title = 'Klicken zum Auswählen · ✎ zum Bearbeiten';
+    node.addEventListener('click', () => toggleSelect(t.id, node));
+    if (selected.has(t.id)) node.classList.add('selected');
   }
   return node;
+}
+
+function toggleSelect(id, node) {
+  if (selected.has(id)) { selected.delete(id); node.classList.remove('selected'); }
+  else { selected.add(id); node.classList.add('selected'); }
+  updateFlushUI();
+}
+
+function updateFlushUI() {
+  const open = tickets.filter((t) => !t.exportedAt);
+  // Auswahl auf noch vorhandene, offene Tickets begrenzen
+  for (const id of [...selected]) if (!open.some((t) => t.id === id)) selected.delete(id);
+  const sel = selected.size;
+  el.openCount.textContent = open.length;
+  el.flushCount.textContent = sel || open.length;
+  el.flushBtn.disabled = open.length === 0;
+  el.flushLabel.textContent = sel ? 'Ausgewählte schreiben' : 'in Inbox schreiben';
 }
 
 function render() {
@@ -267,9 +287,7 @@ function render() {
   open.forEach((t) => el.list.appendChild(ticketNode(t, false)));
   el.empty.style.display = open.length ? 'none' : 'block';
 
-  el.openCount.textContent = open.length;
-  el.flushCount.textContent = open.length;
-  el.flushBtn.disabled = open.length === 0;
+  updateFlushUI();
 
   // Geschrieben-Bereich
   el.doneWrap.hidden = done.length === 0;
@@ -342,7 +360,8 @@ function buildMarkdown(t, imgRefs) {
 }
 async function flush() {
   const open = tickets.filter((t) => !t.exportedAt).sort((a, b) => a.createdAt - b.createdAt);
-  if (!open.length) return;
+  const chosen = selected.size ? open.filter((t) => selected.has(t.id)) : open;
+  if (!chosen.length) return;
   if (!connected) { const ok = await connectFolder(); if (!ok) return; }
   if (!(await verifyPermission(rootHandle, true))) { connected = false; render(); toast('Zugriff auf den Ordner fehlt.', 'err'); return; }
 
@@ -350,7 +369,7 @@ async function flush() {
   let written = 0;
   try {
     const inbox = await rootHandle.getDirectoryHandle('inbox', { create: true });
-    for (const t of open) {
+    for (const t of chosen) {
       const dir = await inbox.getDirectoryHandle(`${stamp(t.createdAt)}_${slug(t.title)}`, { create: true });
       const refs = [];
       let i = 1;
@@ -361,6 +380,7 @@ async function flush() {
       }
       await writeFile(dir, 'ticket.md', new Blob([buildMarkdown(t, refs)], { type: 'text/markdown' }));
       t.exportedAt = Date.now();
+      selected.delete(t.id);
       await idbPut(t);
       written++;
     }
