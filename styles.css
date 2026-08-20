@@ -410,11 +410,44 @@ kbd {
 /* ------- Stack ------- */
 .stack-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 10px;
   margin-bottom: 14px;
   padding: 0 2px;
 }
+.sel-tools {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+}
+.sel-info {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.sel-clear { font-family: var(--font-mono); font-size: 11px; }
+
+/* Auswahl-Checkbox */
+.tick {
+  width: 20px; height: 20px;
+  flex: none;
+  border: 1.8px solid var(--ink-4);
+  border-radius: 6px;
+  background: var(--panel);
+  cursor: pointer;
+  display: grid; place-items: center;
+  padding: 0;
+  align-self: start;
+  margin-top: 1px;
+  transition: background 0.14s var(--ease), border-color 0.14s var(--ease);
+}
+.tick:hover { border-color: var(--accent); }
+.tick[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.tick[aria-checked="true"]::after { content: "✓"; color: #fff; font-size: 13px; font-weight: 700; line-height: 1; }
+.tick[aria-checked="mixed"] { border-color: var(--accent); }
+.tick[aria-checked="mixed"]::after { content: ""; width: 9px; height: 2px; background: var(--accent); border-radius: 2px; }
+.sel-tools .tick-all { width: 18px; height: 18px; }
 .stack-head h2 {
   margin: 0;
   font-size: 13px;
@@ -437,12 +470,13 @@ kbd {
   --accent-bar: var(--accent);
   position: relative;
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
+  align-items: start;
   gap: 10px 14px;
   background: var(--panel);
   border: 1px solid var(--line-soft);
   border-radius: var(--radius-sm);
-  padding: 14px 14px 14px 18px;
+  padding: 14px 14px 14px 16px;
   cursor: pointer;
   box-shadow: 0 6px 18px -14px rgba(20, 40, 58, 0.25);
   transition: border-color 0.18s, transform 0.18s var(--ease), background 0.18s, box-shadow 0.18s;
@@ -467,7 +501,8 @@ kbd {
 .ticket.selected::before { opacity: 1; width: 4px; }
 .ticket.selected .ticket-actions { opacity: 1; }
 
-.ticket-main { min-width: 0; grid-column: 1; }
+.ticket.done { grid-template-columns: 1fr; cursor: default; }
+.ticket-main { min-width: 0; }
 .ticket-title {
   font-weight: 700;
   font-size: 16px;
@@ -516,7 +551,6 @@ kbd {
 }
 
 .ticket-actions {
-  grid-column: 2; grid-row: 1 / span 3;
   display: flex; flex-direction: column; gap: 6px;
   align-self: start;
   opacity: 0; transition: opacity 0.16s;

@@ -96,6 +96,8 @@ let connected = false;
 let draftUrls = [];
 let listUrls = [];
 let selected = new Set();   // IDs ausgewählter offener Tickets
+let lastSelId = null;       // Anker für Shift-Bereichsauswahl
+let openOrder = [];         // Reihenfolge der offenen Tickets
 
 /* ---------- Elemente ---------- */
 const el = {
@@ -107,6 +109,7 @@ const el = {
   flushBtn: $('#flushBtn'), flushCount: $('#flushCount'), flushLabel: $('#flushLabel'),
   doneWrap: $('#doneWrap'), doneToggle: $('#doneToggle'), doneList: $('#doneList'),
   doneCount: $('#doneCount'), clearDone: $('#clearDone'), toast: $('#toast'),
+  selTools: $('#selTools'), selectAll: $('#selectAll'), selInfo: $('#selInfo'), selClear: $('#selClear'),
 };
 
 /* ---------- Toast ---------- */
@@ -219,7 +222,8 @@ function typeAccent(type) {
 }
 function ticketNode(t, done) {
   const node = document.createElement('article');
-  node.className = 'ticket';
+  node.className = 'ticket' + (done ? ' done' : '');
+  node.dataset.id = t.id;
   node.style.setProperty('--accent-bar', typeAccent(t.type));
 
   const thumbs = (t.images || []).slice(0, 4).map((img) => {
@@ -227,8 +231,11 @@ function ticketNode(t, done) {
     return `<img src="${url}" alt="" loading="lazy" />`;
   }).join('');
   const extra = (t.images || []).length > 4 ? `<span class="more">+${t.images.length - 4}</span>` : '';
+  const checkbox = done ? '' :
+    `<button class="tick" type="button" role="checkbox" aria-checked="false" aria-label="auswählen"></button>`;
 
   node.innerHTML = `
+    ${checkbox}
     <div class="ticket-main">
       <div class="ticket-title"></div>
       <div class="ticket-meta">
@@ -252,28 +259,73 @@ function ticketNode(t, done) {
     editB.addEventListener('click', (e) => { e.stopPropagation(); loadForEdit(t.id); });
     delB.addEventListener('click', (e) => { e.stopPropagation(); deleteTicket(t.id, node); });
     node.appendChild(actions);
-    node.title = 'Klicken zum Auswählen · ✎ zum Bearbeiten';
-    node.addEventListener('click', () => toggleSelect(t.id, node));
-    if (selected.has(t.id)) node.classList.add('selected');
+
+    const cb = node.querySelector('.tick');
+    cb.addEventListener('click', (e) => { e.stopPropagation(); selectClick(t.id, e.shiftKey); });
+    node.addEventListener('click', (e) => {
+      if (e.target.closest('.icon-btn') || e.target.closest('.tick')) return;
+      selectClick(t.id, e.shiftKey);
+    });
+    node.title = 'Klick = auswählen · Shift-Klick = Bereich · ✎ = bearbeiten';
+    if (selected.has(t.id)) { node.classList.add('selected'); cb.setAttribute('aria-checked', 'true'); }
   }
   return node;
 }
 
-function toggleSelect(id, node) {
-  if (selected.has(id)) { selected.delete(id); node.classList.remove('selected'); }
-  else { selected.add(id); node.classList.add('selected'); }
+// Auswahl: einzeln togglen, mit Shift den Bereich seit dem letzten Klick
+function selectClick(id, shift) {
+  if (shift && lastSelId && openOrder.includes(lastSelId) && openOrder.includes(id)) {
+    let a = openOrder.indexOf(lastSelId), b = openOrder.indexOf(id);
+    if (a > b) { const tmp = a; a = b; b = tmp; }
+    for (let i = a; i <= b; i++) selected.add(openOrder[i]);
+  } else {
+    if (selected.has(id)) selected.delete(id); else selected.add(id);
+  }
+  lastSelId = id;
+  syncSelectionUI();
+  updateFlushUI();
+}
+
+function syncSelectionUI() {
+  el.list.querySelectorAll('.ticket').forEach((n) => {
+    const on = selected.has(n.dataset.id);
+    n.classList.toggle('selected', on);
+    const cb = n.querySelector('.tick');
+    if (cb) cb.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+}
+
+function selectAllToggle() {
+  const allSel = openOrder.length > 0 && openOrder.every((id) => selected.has(id));
+  if (allSel) selected.clear();
+  else openOrder.forEach((id) => selected.add(id));
+  lastSelId = null;
+  syncSelectionUI();
+  updateFlushUI();
+}
+
+function clearSelection() {
+  selected.clear();
+  lastSelId = null;
+  syncSelectionUI();
   updateFlushUI();
 }
 
 function updateFlushUI() {
   const open = tickets.filter((t) => !t.exportedAt);
-  // Auswahl auf noch vorhandene, offene Tickets begrenzen
   for (const id of [...selected]) if (!open.some((t) => t.id === id)) selected.delete(id);
   const sel = selected.size;
   el.openCount.textContent = open.length;
   el.flushCount.textContent = sel || open.length;
   el.flushBtn.disabled = open.length === 0;
-  el.flushLabel.textContent = sel ? 'Ausgewählte schreiben' : 'in Inbox schreiben';
+  el.flushLabel.textContent = sel ? 'Ausgewählte schreiben' : 'Alle schreiben';
+
+  // Auswahl-Werkzeuge im Listenkopf
+  el.selTools.style.display = open.length ? 'inline-flex' : 'none';
+  const allSel = open.length > 0 && sel === open.length;
+  el.selectAll.setAttribute('aria-checked', allSel ? 'true' : (sel ? 'mixed' : 'false'));
+  el.selClear.hidden = sel === 0;
+  el.selInfo.textContent = sel ? `${sel} ausgewählt` : 'alle';
 }
 
 function render() {
@@ -282,6 +334,7 @@ function render() {
 
   const open = tickets.filter((t) => !t.exportedAt).sort((a, b) => b.createdAt - a.createdAt);
   const done = tickets.filter((t) => t.exportedAt).sort((a, b) => b.exportedAt - a.exportedAt);
+  openOrder = open.map((t) => t.id);
 
   el.list.innerHTML = '';
   open.forEach((t) => el.list.appendChild(ticketNode(t, false)));
@@ -443,6 +496,8 @@ function wire() {
 
   el.connectBtn.addEventListener('click', connectFolder);
   el.flushBtn.addEventListener('click', flush);
+  el.selectAll.addEventListener('click', selectAllToggle);
+  el.selClear.addEventListener('click', clearSelection);
   el.doneToggle.addEventListener('click', () => {
     const open = el.doneList.hidden;
     el.doneList.hidden = !open;
