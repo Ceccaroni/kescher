@@ -35,8 +35,9 @@
   --task:      #2f9e57;
   --ok:        #2f9e57;
 
-  --font-display: 'Bricolage Grotesque', 'Trebuchet MS', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Lexend überall — SELAS-Markenschrift (Variablennamen aus Historie beibehalten) */
+  --font-display: 'Lexend', system-ui, sans-serif;
+  --font-mono: 'Lexend', system-ui, sans-serif;
   --font-brand: 'Lexend', system-ui, sans-serif;
 
   --radius: 16px;
