@@ -13,14 +13,18 @@ Screenshot → Text kopieren". Screenshot per `⌘V`, Kommentar tippen, fertig.
 
 ## Einmal einrichten
 
-### 1. Starten
+### 1. Starten / Stoppen
 ```bash
-./start.command      # Doppelklick im Finder – oder im Terminal
-# oder:
-npm start            # = python3 -m http.server 4177
+./start.command      # Server im Hintergrund + Browser öffnen (Doppelklick im Finder)
+./stop.command       # Server wieder beenden
+# Alternativ: npm start   (= python3 -m http.server 4177, im Vordergrund)
 ```
-Öffnet `http://localhost:4177/` in **Chrome / Arc / Brave / Edge**
-(Safari kann die nötige File System Access API nicht — Chromium ist Pflicht).
+`start.command` öffnet `http://localhost:4177/` in **Chrome / Arc / Brave / Edge**
+(Safari kann die nötige File System Access API nicht — Chromium ist Pflicht) und
+läuft im Hintergrund weiter; das Terminalfenster kannst du schließen.
+
+Der Server wird **nur zum Installieren und für Updates** gebraucht — die als App
+installierte PWA läuft danach offline aus dem Dock.
 
 ### 2. Als App installieren (empfohlen)
 In der Adressleiste das **Installieren-Icon** anklicken (oder Menü →
@@ -110,6 +114,6 @@ Toggle oben rechts, System-Preference respektieren.
 ## Marke & Lizenzen
 - **Produkt:** Kescher — gebaut von **SELAS**.
 - **Logo** `assets/selas-logo.svg` — Marke SELAS; Schriftzug in **Lexend**.
-- **Schriften** (lokal in `fonts/`, SIL OFL 1.1): Bricolage Grotesque,
-  JetBrains Mono, Lexend — siehe [`fonts/LICENSES.md`](fonts/LICENSES.md).
+- **Schrift** (lokal in `fonts/`, SIL OFL 1.1): **Lexend** (SELAS-Markenschrift) —
+  siehe [`fonts/LICENSES.md`](fonts/LICENSES.md).
 - **Code:** © SELAS. Eine Code-Lizenz (z. B. MIT) kann bei Bedarf ergänzt werden.

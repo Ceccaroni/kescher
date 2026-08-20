@@ -1,18 +1,27 @@
 #!/bin/bash
-# Kescher starten: lokalen Server hochfahren + Browser öffnen.
-# Doppelklick im Finder genügt (oder: ./start.command im Terminal).
+# ▶ Kescher STARTEN — lokalen Server hochfahren (Hintergrund) + Browser öffnen.
+# Nötig nur zum Installieren oder Update-Ziehen; die installierte PWA im Dock
+# läuft danach ohnehin offline. Doppelklick im Finder genügt.
 cd "$(dirname "$0")" || exit 1
 PORT="${KESCHER_PORT:-4177}"
 
-echo "▸ Kescher läuft auf http://localhost:$PORT/"
-echo "  (Fenster offen lassen, solange du die App über den Browser lädst."
-echo "   Nach dem Installieren als PWA läuft sie auch ohne diesen Server.)"
-echo "  Beenden: Ctrl+C"
-echo
+if curl -s -o /dev/null --max-time 2 "http://localhost:$PORT/"; then
+  echo "▸ Kescher läuft bereits auf http://localhost:$PORT/"
+else
+  nohup python3 -m http.server "$PORT" >/tmp/kescher-server.log 2>&1 &
+  disown 2>/dev/null || true
+  for _ in $(seq 1 12); do
+    curl -s -o /dev/null --max-time 1 "http://localhost:$PORT/" && break
+    sleep 0.3
+  done
+  echo "▸ Kescher gestartet auf http://localhost:$PORT/"
+fi
 
-python3 -m http.server "$PORT" >/dev/null 2>&1 &
-SRV=$!
-sleep 1
-open "http://localhost:$PORT/" 2>/dev/null || true
-trap 'kill $SRV 2>/dev/null' EXIT
-wait $SRV
+# Chromium-Browser bevorzugen (Safari kann die File-System-Access-API nicht)
+opened=""
+for app in "Google Chrome" "Arc" "Brave Browser" "Microsoft Edge"; do
+  if [ -d "/Applications/$app.app" ]; then open -a "$app" "http://localhost:$PORT/"; opened=1; break; fi
+done
+[ -z "$opened" ] && open "http://localhost:$PORT/"
+
+echo "  Beenden: stop.command   ·   Dieses Fenster kannst du schließen."
