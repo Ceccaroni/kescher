@@ -43,6 +43,15 @@ function extFor(mime, name) {
   return 'png';
 }
 function yaml(str) { return '"' + String(str).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"'; }
+function safeFilename(name, ext) {
+  let base = (name || 'datei').replace(/[\/\\]/g, '-').replace(/[\x00-\x1f<>:"|?*]/g, '').trim() || 'datei';
+  if (ext && !/\.[a-z0-9]+$/i.test(base)) base += '.' + ext;
+  return base;
+}
+function suffixName(name, n) {
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? `${name.slice(0, dot)}-${n}${name.slice(dot)}` : `${name}-${n}`;
+}
 
 /* ---------- IndexedDB ---------- */
 const DB_NAME = 'kescher';
@@ -89,7 +98,7 @@ function kvSet(k, v) {
 
 /* ---------- State ---------- */
 let tickets = [];
-let draft = { type: 'idea', images: [] };
+let draft = { type: 'idea', files: [] };
 let editingId = null;
 let rootHandle = null;
 let connected = false;
@@ -121,10 +130,17 @@ function toast(msg, kind = '') {
   toastTimer = setTimeout(() => { el.toast.className = 'toast'; }, 3200);
 }
 
-/* ---------- Bilder im Composer ---------- */
-function addImage(file) {
-  if (!file || !file.type.startsWith('image/')) return;
-  draft.images.push({ id: uuid(), name: file.name || 'pasted.png', type: file.type || 'image/png', blob: file });
+/* ---------- Anhänge im Composer (Bilder + beliebige Dateien) ---------- */
+function addAttachment(file) {
+  if (!file) return;
+  const isImage = (file.type || '').startsWith('image/');
+  draft.files.push({
+    id: uuid(),
+    name: file.name || (isImage ? 'pasted.png' : 'datei'),
+    type: file.type || '',
+    blob: file,
+    isImage,
+  });
   renderThumbs();
   flashDrop();
 }
@@ -136,17 +152,27 @@ function renderThumbs() {
   draftUrls.forEach(URL.revokeObjectURL);
   draftUrls = [];
   el.thumbs.innerHTML = '';
-  draft.images.forEach((img) => {
-    const url = URL.createObjectURL(img.blob); draftUrls.push(url);
-    const d = document.createElement('div');
-    d.className = 'thumb';
-    d.innerHTML = `<img src="${url}" alt="" /><button class="rm" title="entfernen" type="button">✕</button>`;
-    d.querySelector('.rm').addEventListener('click', (e) => {
+  draft.files.forEach((f) => {
+    let node;
+    if (f.isImage) {
+      const url = URL.createObjectURL(f.blob); draftUrls.push(url);
+      node = document.createElement('div');
+      node.className = 'thumb';
+      node.innerHTML = `<img src="${url}" alt="" /><button class="rm" title="entfernen" type="button">✕</button>`;
+    } else {
+      node = document.createElement('div');
+      node.className = 'attach';
+      node.innerHTML = `<span class="attach-ext">${extFor(f.type, f.name).toUpperCase().slice(0, 4)}</span>` +
+                       `<span class="attach-name"></span>` +
+                       `<button class="rm" title="entfernen" type="button">✕</button>`;
+      node.querySelector('.attach-name').textContent = f.name;
+    }
+    node.querySelector('.rm').addEventListener('click', (e) => {
       e.stopPropagation();
-      draft.images = draft.images.filter((x) => x.id !== img.id);
+      draft.files = draft.files.filter((x) => x.id !== f.id);
       renderThumbs();
     });
-    el.thumbs.appendChild(d);
+    el.thumbs.appendChild(node);
   });
 }
 
@@ -154,7 +180,7 @@ function renderThumbs() {
 function resetComposer() {
   el.title.value = '';
   el.body.value = '';
-  draft = { type: 'idea', images: [] };
+  draft = { type: 'idea', files: [] };
   editingId = null;
   syncTypeChips();
   renderThumbs();
@@ -168,16 +194,16 @@ function syncTypeChips() {
 async function saveTicket() {
   const title = el.title.value.trim();
   const body = el.body.value.trim();
-  let effTitle = title || firstLine(body) || (draft.images.length ? 'Screenshot' : '');
-  if (!effTitle) { el.title.focus(); toast('Titel, Text oder Screenshot fehlt.'); return; }
+  let effTitle = title || firstLine(body) || (draft.files.length ? 'Anhang' : '');
+  if (!effTitle) { el.title.focus(); toast('Titel, Text oder Anhang fehlt.'); return; }
 
   let t;
   if (editingId) {
     t = tickets.find((x) => x.id === editingId);
     if (!t) { resetComposer(); return; }
-    t.title = effTitle; t.body = body; t.type = draft.type; t.images = draft.images;
+    t.title = effTitle; t.body = body; t.type = draft.type; t.files = draft.files;
   } else {
-    t = { id: uuid(), title: effTitle, body, type: draft.type, images: draft.images,
+    t = { id: uuid(), title: effTitle, body, type: draft.type, files: draft.files,
           createdAt: Date.now(), exportedAt: null };
     tickets.push(t);
   }
@@ -194,7 +220,7 @@ function loadForEdit(id) {
   editingId = id;
   el.title.value = t.title;
   el.body.value = t.body || '';
-  draft = { type: t.type, images: t.images.slice() };
+  draft = { type: t.type, files: (t.files || []).slice() };
   syncTypeChips();
   renderThumbs();
   el.addBtn.textContent = 'Aktualisieren';
@@ -226,11 +252,15 @@ function ticketNode(t, done) {
   node.dataset.id = t.id;
   node.style.setProperty('--accent-bar', typeAccent(t.type));
 
-  const thumbs = (t.images || []).slice(0, 4).map((img) => {
-    const url = URL.createObjectURL(img.blob); listUrls.push(url);
-    return `<img src="${url}" alt="" loading="lazy" />`;
+  const atts = t.files || [];
+  const thumbs = atts.slice(0, 4).map((f) => {
+    if (f.isImage) {
+      const url = URL.createObjectURL(f.blob); listUrls.push(url);
+      return `<img src="${url}" alt="" loading="lazy" />`;
+    }
+    return `<span class="filechip">${extFor(f.type, f.name).toUpperCase().slice(0, 4)}</span>`;
   }).join('');
-  const extra = (t.images || []).length > 4 ? `<span class="more">+${t.images.length - 4}</span>` : '';
+  const extra = atts.length > 4 ? `<span class="more">+${atts.length - 4}</span>` : '';
   const checkbox = done ? '' :
     `<button class="tick" type="button" role="checkbox" aria-checked="false" aria-label="auswählen"></button>`;
 
@@ -241,7 +271,7 @@ function ticketNode(t, done) {
       <div class="ticket-meta">
         <span class="badge">${TYPES[t.type] || t.type}</span>
         <span>${done ? 'geschrieben' : relTime(t.createdAt)}</span>
-        ${t.images && t.images.length ? `<span>· ${t.images.length} 📎</span>` : ''}
+        ${atts.length ? `<span>· ${atts.length} 📎</span>` : ''}
       </div>
       ${t.body ? `<div class="ticket-body"></div>` : ''}
       ${thumbs ? `<div class="ticket-thumbs">${thumbs}${extra}</div>` : ''}
@@ -401,13 +431,14 @@ async function writeFile(dir, name, blob) {
   await w.write(blob);
   await w.close();
 }
-function buildMarkdown(t, imgRefs) {
+function buildMarkdown(t, refs) {
   const created = new Date(t.createdAt).toISOString();
   let md = `---\ntitle: ${yaml(t.title)}\ntype: ${t.type}\ncreated: ${created}\nstatus: open\n---\n\n`;
   const body = (t.body || '').trim();
   if (body) md += body + '\n';
-  if (imgRefs.length) {
-    md += `\n## Screenshots\n\n` + imgRefs.map((f) => `![${f}](${f})`).join('\n') + '\n';
+  if (refs.length) {
+    md += `\n## Anhänge\n\n` +
+      refs.map((r) => r.isImage ? `![${r.name}](${r.name})` : `[${r.name}](${r.name})`).join('\n') + '\n';
   }
   return md;
 }
@@ -425,11 +456,18 @@ async function flush() {
     for (const t of chosen) {
       const dir = await inbox.getDirectoryHandle(`${stamp(t.createdAt)}_${slug(t.title)}`, { create: true });
       const refs = [];
-      let i = 1;
-      for (const img of (t.images || [])) {
-        const fname = `shot-${i}.${extFor(img.type, img.name)}`;
-        await writeFile(dir, fname, img.blob);
-        refs.push(fname); i++;
+      const usedNames = new Set();
+      let imgIdx = 1;
+      for (const f of (t.files || [])) {
+        const ext = extFor(f.type, f.name);
+        const generic = !f.name || /^(image|pasted|screenshot|unbenannt|datei|grafik)/i.test(f.name);
+        let base = (f.isImage && generic) ? `shot-${imgIdx}.${ext}` : safeFilename(f.name, ext);
+        let fname = base, n = 2;
+        while (usedNames.has(fname)) fname = suffixName(base, n++);
+        usedNames.add(fname);
+        await writeFile(dir, fname, f.blob);
+        if (f.isImage) imgIdx++;
+        refs.push({ name: fname, isImage: f.isImage });
       }
       await writeFile(dir, 'ticket.md', new Blob([buildMarkdown(t, refs)], { type: 'text/markdown' }));
       t.exportedAt = Date.now();
@@ -472,23 +510,23 @@ function wire() {
   }));
 
   // Drop-Zone
-  el.drop.addEventListener('click', (e) => { if (!e.target.closest('.thumb')) el.fileInput.click(); });
+  el.drop.addEventListener('click', (e) => { if (!e.target.closest('.thumb') && !e.target.closest('.attach')) el.fileInput.click(); });
   el.drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.fileInput.click(); } });
-  el.fileInput.addEventListener('change', () => { [...el.fileInput.files].forEach(addImage); el.fileInput.value = ''; });
+  el.fileInput.addEventListener('change', () => { [...el.fileInput.files].forEach(addAttachment); el.fileInput.value = ''; });
   ['dragenter', 'dragover'].forEach((ev) => el.drop.addEventListener(ev, (e) => { e.preventDefault(); el.drop.classList.add('dragover'); }));
   ['dragleave', 'dragend'].forEach((ev) => el.drop.addEventListener(ev, () => el.drop.classList.remove('dragover')));
   el.drop.addEventListener('drop', (e) => {
     e.preventDefault(); el.drop.classList.remove('dragover');
-    [...(e.dataTransfer.files || [])].forEach(addImage);
+    [...(e.dataTransfer.files || [])].forEach(addAttachment);
   });
 
-  // Screenshot per Cmd+V einfügen (global)
+  // Einfügen per Cmd+V (Screenshot aus der Zwischenablage oder kopierte Datei)
   window.addEventListener('paste', (e) => {
     const items = e.clipboardData ? e.clipboardData.items : [];
     let found = false;
     for (const it of items) {
-      if (it.kind === 'file' && it.type.startsWith('image/')) {
-        const f = it.getAsFile(); if (f) { addImage(f); found = true; }
+      if (it.kind === 'file') {
+        const f = it.getAsFile(); if (f) { addAttachment(f); found = true; }
       }
     }
     if (found) e.preventDefault();
@@ -513,6 +551,11 @@ async function init() {
   syncTypeChips();
   try {
     tickets = await idbGetAll();
+    // Migration: altes Feld images -> files, isImage nachziehen
+    tickets.forEach((t) => {
+      if (!t.files) t.files = t.images || [];
+      t.files.forEach((f) => { if (f.isImage === undefined) f.isImage = (f.type || '').startsWith('image/'); });
+    });
     const saved = await kvGet('rootHandle');
     if (saved) {
       rootHandle = saved;
