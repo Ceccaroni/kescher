@@ -54,8 +54,9 @@ die Freigabe dauerhaft.
 
    Claude liest `inbox/`, sieht Text **und** Screenshots und erzeugt daraus die
    fertigen Tickets.
-3. Danach in Kescher optional **„geschriebene aus der App entfernen"**
-   (die Dateien im `inbox/` bleiben).
+3. Der Bereich **„Zuletzt geschrieben"** behält nur den *letzten* Schreibvorgang
+   als Sicherheitsnetz (falls beim Abarbeiten etwas schiefgeht); ältere werden beim
+   nächsten Schreiben automatisch entfernt. Die Dateien im `inbox/` bleiben ohnehin.
 
 ---
 

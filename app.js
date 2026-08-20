@@ -449,6 +449,7 @@ async function flush() {
   if (!connected) { const ok = await connectFolder(); if (!ok) return; }
   if (!(await verifyPermission(rootHandle, true))) { connected = false; render(); toast('Zugriff auf den Ordner fehlt.', 'err'); return; }
 
+  const prevDone = tickets.filter((t) => t.exportedAt);  // frühere Schreibvorgänge
   el.flushBtn.disabled = true;
   let written = 0;
   try {
@@ -474,6 +475,12 @@ async function flush() {
       selected.delete(t.id);
       await idbPut(t);
       written++;
+    }
+    // Archiv nur mit dem aktuellen Schreibvorgang füllen – ältere entfernen
+    if (prevDone.length) {
+      const prevIds = new Set(prevDone.map((p) => p.id));
+      for (const p of prevDone) await idbDel(p.id);
+      tickets = tickets.filter((x) => !prevIds.has(x.id));
     }
     render();
     toast(`<span class="t-accent">${written}</span> Ticket${written === 1 ? '' : 's'} → ${rootHandle.name}/inbox/`, 'ok');
