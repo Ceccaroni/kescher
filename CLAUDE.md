@@ -2,12 +2,15 @@
 
 Eine installierbare PWA (reines HTML/CSS/JS, kein Build) zum schnellen Erfassen
 von Ideen/Tickets **mit Screenshots**. Sie schreibt gesammelte Einträge über die
-File System Access API als Markdown + Bilder nach `inbox/`.
+File System Access API als Markdown + Bilder in den **Ticket-Ordner des im
+Composer gewählten Projekts** (mehrere Repos hinterlegbar; je Projekt ein
+Ordner-Handle + Ticket-Unterordner, Default `inbox`). Projekte werden lokal in
+IndexedDB (KV-Store `projects`) verwaltet; jedes Ticket trägt eine `projectId`.
 
 ## Wenn der Nutzer sagt „arbeite die Inbox ab" (o. Ä.)
 
 1. `inbox/` durchgehen. Jeder Unterordner = ein Ticket:
-   - `ticket.md` mit Frontmatter (`title`, `type`, `created`, `status`) + Beschreibung + Sektion `## Anhänge`
+   - `ticket.md` mit Frontmatter (`title`, `type`, `created`, `status`, `project`) + Beschreibung + Sektion `## Anhänge`
    - Anhänge: Bilder als `shot-*.png|jpg`, sonstige Dateien mit Originalnamen (PDF, MD, TXT, DOCX, PPTX, …)
 2. Anhänge **lesen** (Read-Tool kann Bilder & PDFs; Text/MD direkt) und in die Ticket-Erstellung einbeziehen.
 3. Daraus die finalen Tickets erzeugen. **Ziel ist noch nicht fixiert** — beim

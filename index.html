@@ -40,10 +40,6 @@
       </div>
 
       <div class="topbar-right">
-        <button id="connectBtn" class="folder-chip" type="button">
-          <span class="dot" id="folderDot"></span>
-          <span id="folderLabel">Ordner verbinden</span>
-        </button>
         <button id="flushBtn" class="btn-primary" type="button" disabled>
           <span class="flush-arrow">→</span> <span id="flushLabel">in Inbox schreiben</span>
           <span class="count-pill" id="flushCount">0</span>
@@ -81,6 +77,15 @@
           </div>
 
           <div class="composer-actions">
+            <div class="proj-select" id="projSelect">
+              <button id="projBtn" class="proj-trigger" type="button"
+                      aria-expanded="false" aria-controls="projPop">
+                <span class="proj-dot" id="projDot" aria-hidden="true"></span>
+                <span class="proj-name" id="projName">Projekt wählen</span>
+                <span class="proj-caret" aria-hidden="true">▾</span>
+              </button>
+              <div class="proj-pop" id="projPop" hidden></div>
+            </div>
             <span class="hint" id="editHint" hidden>Bearbeiten — <button class="link" id="cancelEdit" type="button">abbrechen</button></span>
             <span class="hint kbd-hint"><kbd>⌘</kbd><kbd>↵</kbd> erfassen</span>
             <button id="addBtn" class="btn-primary" type="button">Erfassen</button>

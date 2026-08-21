@@ -1,7 +1,7 @@
 /* Kescher Service Worker — App-Shell offline verfügbar halten.
    Strategie: Kern-Shell beim Install vorcachen; sonst same-origin GET
    cache-first mit Netzwerk-Nachschub (Fonts/Icons landen beim ersten Laden im Cache). */
-const CACHE = 'kescher-v2';
+const CACHE = 'kescher-v4';
 const CORE = [
   './',
   'index.html',

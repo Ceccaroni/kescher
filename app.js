@@ -1,8 +1,9 @@
 /* ===========================================================================
    KESCHER — app logic
    - Tickets + Screenshots lokal in IndexedDB (nichts geht verloren)
-   - "in Inbox schreiben" materialisiert sie als Markdown + Bilder in einen
-     via File System Access API gewählten Ordner (persistent)
+   - "in Inbox schreiben" materialisiert sie als Markdown + Bilder in den
+     Ticket-Ordner des gewählten Projekts (File System Access API, persistent)
+   - Mehrere Projekte/Repos: jedes mit eigenem Ordner-Handle + Ticket-Unterordner
    =========================================================================== */
 'use strict';
 
@@ -98,15 +99,19 @@ function kvSet(k, v) {
 
 /* ---------- State ---------- */
 let tickets = [];
-let draft = { type: 'idea', files: [] };
+let draft = { type: 'idea', files: [], projectId: null };
 let editingId = null;
-let rootHandle = null;
-let connected = false;
 let draftUrls = [];
 let listUrls = [];
 let selected = new Set();   // IDs ausgewählter offener Tickets
 let lastSelId = null;       // Anker für Shift-Bereichsauswahl
 let openOrder = [];         // Reihenfolge der offenen Tickets
+
+// Projekte (Repos + Ticket-Ordner) — beliebig erweiterbar
+let projects = [];            // [{ id, name, handle, subdir, color, granted(transient) }]
+let activeProjectId = null;   // zuletzt gewähltes Ziel für neue Tickets
+let projForm = { editingId: null, handle: null }; // Zustand des Anlegen/Bearbeiten-Formulars
+const PROJECT_COLORS = ['#0fa79a', '#3f74e0', '#e0544b', '#2f9e57', '#9b59b6', '#e08a1e', '#d6455f'];
 
 /* ---------- Elemente ---------- */
 const el = {
@@ -114,11 +119,12 @@ const el = {
   drop: $('#drop'), thumbs: $('#thumbs'), fileInput: $('#fileInput'),
   addBtn: $('#addBtn'), editHint: $('#editHint'), cancelEdit: $('#cancelEdit'),
   list: $('#list'), empty: $('#emptyState'), openCount: $('#openCount'),
-  connectBtn: $('#connectBtn'), folderChip: $('#connectBtn'), folderLabel: $('#folderLabel'),
   flushBtn: $('#flushBtn'), flushCount: $('#flushCount'), flushLabel: $('#flushLabel'),
   doneWrap: $('#doneWrap'), doneToggle: $('#doneToggle'), doneList: $('#doneList'),
   doneCount: $('#doneCount'), clearDone: $('#clearDone'), toast: $('#toast'),
   selTools: $('#selTools'), selectAll: $('#selectAll'), selInfo: $('#selInfo'), selClear: $('#selClear'),
+  projSelect: $('#projSelect'), projBtn: $('#projBtn'), projName: $('#projName'),
+  projDot: $('#projDot'), projPop: $('#projPop'),
 };
 
 /* ---------- Toast ---------- */
@@ -180,9 +186,10 @@ function renderThumbs() {
 function resetComposer() {
   el.title.value = '';
   el.body.value = '';
-  draft = { type: 'idea', files: [] };
+  draft = { type: 'idea', files: [], projectId: activeProjectId };
   editingId = null;
   syncTypeChips();
+  syncProjectSelector();
   renderThumbs();
   el.addBtn.textContent = 'Erfassen';
   el.editHint.hidden = true;
@@ -202,8 +209,10 @@ async function saveTicket() {
     t = tickets.find((x) => x.id === editingId);
     if (!t) { resetComposer(); return; }
     t.title = effTitle; t.body = body; t.type = draft.type; t.files = draft.files;
+    t.projectId = draft.projectId || activeProjectId;
   } else {
     t = { id: uuid(), title: effTitle, body, type: draft.type, files: draft.files,
+          projectId: draft.projectId || activeProjectId,
           createdAt: Date.now(), exportedAt: null };
     tickets.push(t);
   }
@@ -220,8 +229,9 @@ function loadForEdit(id) {
   editingId = id;
   el.title.value = t.title;
   el.body.value = t.body || '';
-  draft = { type: t.type, files: (t.files || []).slice() };
+  draft = { type: t.type, files: (t.files || []).slice(), projectId: t.projectId || activeProjectId };
   syncTypeChips();
+  syncProjectSelector();
   renderThumbs();
   el.addBtn.textContent = 'Aktualisieren';
   el.editHint.hidden = false;
@@ -264,12 +274,18 @@ function ticketNode(t, done) {
   const checkbox = done ? '' :
     `<button class="tick" type="button" role="checkbox" aria-checked="false" aria-label="auswählen"></button>`;
 
+  const projP = getProject(t.projectId);
+  const projTag = projP
+    ? `<span class="proj-tag"><span class="proj-tag-dot" style="background:${projP.color || 'var(--accent)'}"></span><span class="proj-tag-name"></span></span>`
+    : (t.projectId ? `<span class="proj-tag missing">Projekt&nbsp;fehlt</span>` : '');
+
   node.innerHTML = `
     ${checkbox}
     <div class="ticket-main">
       <div class="ticket-title"></div>
       <div class="ticket-meta">
         <span class="badge">${TYPES[t.type] || t.type}</span>
+        ${projTag}
         <span>${done ? 'geschrieben' : relTime(t.createdAt)}</span>
         ${atts.length ? `<span>· ${atts.length} 📎</span>` : ''}
       </div>
@@ -277,6 +293,7 @@ function ticketNode(t, done) {
       ${thumbs ? `<div class="ticket-thumbs">${thumbs}${extra}</div>` : ''}
     </div>`;
   node.querySelector('.ticket-title').textContent = t.title;
+  if (projP) node.querySelector('.proj-tag-name').textContent = projP.name;
   if (t.body) node.querySelector('.ticket-body').textContent = t.body;
 
   if (!done) {
@@ -378,14 +395,13 @@ function render() {
   el.doneList.innerHTML = '';
   done.forEach((t) => el.doneList.appendChild(ticketNode(t, true)));
   el.clearDone.hidden = done.length === 0 || el.doneList.hidden;
-
-  updateFolderUI();
 }
 
 /* ---------- File System Access ---------- */
 const FS_OK = 'showDirectoryPicker' in window;
 
 async function verifyPermission(handle, request) {
+  if (!handle) return false;
   const opts = { mode: 'readwrite' };
   try {
     if ((await handle.queryPermission(opts)) === 'granted') return true;
@@ -393,36 +409,27 @@ async function verifyPermission(handle, request) {
   } catch (_) {}
   return false;
 }
-function setConnected(name) {
-  connected = true;
-  el.folderChip.classList.add('connected');
-  el.folderLabel.textContent = name;
-}
-function updateFolderUI() {
-  if (!connected) {
-    el.folderChip.classList.remove('connected');
-    if (rootHandle) el.folderLabel.textContent = 'erneut freigeben';
-    else el.folderLabel.textContent = FS_OK ? 'Ordner verbinden' : 'Browser nicht unterstützt';
-  }
-}
-async function connectFolder() {
-  if (!FS_OK) { toast('Dieser Browser hat keine File System Access API. Nimm Chrome, Arc, Brave oder Edge.', 'err'); return false; }
-  // Bestehenden Ordner nur neu freigeben?
-  if (rootHandle && !connected) {
-    if (await verifyPermission(rootHandle, true)) { setConnected(rootHandle.name); render(); return true; }
-  }
+async function pickDirectory() {
+  if (!FS_OK) { toast('Dieser Browser hat keine File System Access API. Nimm Chrome, Arc, Brave oder Edge.', 'err'); return null; }
   try {
-    const dir = await window.showDirectoryPicker({ mode: 'readwrite', id: 'kescher-inbox' });
-    if (await verifyPermission(dir, true)) {
-      rootHandle = dir;
-      await kvSet('rootHandle', dir);
-      setConnected(dir.name);
-      render();
-      toast(`Verbunden: <span class="t-accent">${dir.name}/inbox</span>`, 'ok');
-      return true;
-    }
-  } catch (e) { if (e && e.name !== 'AbortError') toast('Ordner konnte nicht verbunden werden.', 'err'); }
-  return false;
+    const dir = await window.showDirectoryPicker({ mode: 'readwrite', id: 'kescher-repo' });
+    if (await verifyPermission(dir, true)) return dir;
+    toast('Ordner ohne Schreibrecht.', 'err');
+  } catch (e) { if (e && e.name !== 'AbortError') toast('Ordner konnte nicht gewählt werden.', 'err'); }
+  return null;
+}
+async function ensureProjectPermission(p, request) {
+  if (!p || !p.handle) return false;
+  const ok = await verifyPermission(p.handle, request);
+  p.granted = ok;
+  return ok;
+}
+// Repo-Root → (verschachtelter) Ticket-Ordner, bei Bedarf angelegt
+async function resolveTicketDir(p) {
+  let dir = p.handle;
+  const parts = String(p.subdir || 'inbox').split('/').map((s) => s.trim()).filter(Boolean);
+  for (const part of parts) dir = await dir.getDirectoryHandle(part, { create: true });
+  return dir;
 }
 
 async function writeFile(dir, name, blob) {
@@ -431,9 +438,11 @@ async function writeFile(dir, name, blob) {
   await w.write(blob);
   await w.close();
 }
-function buildMarkdown(t, refs) {
+function buildMarkdown(t, refs, projectName) {
   const created = new Date(t.createdAt).toISOString();
-  let md = `---\ntitle: ${yaml(t.title)}\ntype: ${t.type}\ncreated: ${created}\nstatus: open\n---\n\n`;
+  let md = `---\ntitle: ${yaml(t.title)}\ntype: ${t.type}\ncreated: ${created}\nstatus: open\n`;
+  if (projectName) md += `project: ${yaml(projectName)}\n`;
+  md += `---\n\n`;
   const body = (t.body || '').trim();
   if (body) md += body + '\n';
   if (refs.length) {
@@ -446,35 +455,66 @@ async function flush() {
   const open = tickets.filter((t) => !t.exportedAt).sort((a, b) => a.createdAt - b.createdAt);
   const chosen = selected.size ? open.filter((t) => selected.has(t.id)) : open;
   if (!chosen.length) return;
-  if (!connected) { const ok = await connectFolder(); if (!ok) return; }
-  if (!(await verifyPermission(rootHandle, true))) { connected = false; render(); toast('Zugriff auf den Ordner fehlt.', 'err'); return; }
 
-  const prevDone = tickets.filter((t) => t.exportedAt);  // frühere Schreibvorgänge
+  if (!projects.length) {
+    toast('Kein Projekt angelegt — lege zuerst ein Zielprojekt an.', 'err');
+    openProjectPop(); openProjectForm(null);
+    return;
+  }
+
+  // Tickets nach Zielprojekt gruppieren
+  const groups = new Map();  // projectId -> [tickets]
+  const unassigned = [];
+  for (const t of chosen) {
+    let pid = getProject(t.projectId) ? t.projectId : (projects.length === 1 ? projects[0].id : null);
+    if (!pid) { unassigned.push(t); continue; }
+    if (!groups.has(pid)) groups.set(pid, []);
+    groups.get(pid).push(t);
+  }
+  if (unassigned.length) {
+    toast(`${unassigned.length} Ticket${unassigned.length === 1 ? '' : 's'} ohne Projekt — bitte Zielprojekt zuweisen.`, 'err');
+    return;
+  }
+
+  // Berechtigungen vorab anfragen (noch innerhalb der Klick-Aktivierung)
+  for (const pid of groups.keys()) {
+    const p = getProject(pid);
+    const ok = await ensureProjectPermission(p, true);
+    if (!ok) { toast(`Zugriff auf „${p.name}" bestätigen und erneut schreiben.`, 'err'); refreshProjectPop(); return; }
+  }
+  refreshProjectPop();
+
   el.flushBtn.disabled = true;
+  const prevDone = tickets.filter((t) => t.exportedAt);  // frühere Schreibvorgänge
   let written = 0;
+  const targets = new Set();
   try {
-    const inbox = await rootHandle.getDirectoryHandle('inbox', { create: true });
-    for (const t of chosen) {
-      const dir = await inbox.getDirectoryHandle(`${stamp(t.createdAt)}_${slug(t.title)}`, { create: true });
-      const refs = [];
-      const usedNames = new Set();
-      let imgIdx = 1;
-      for (const f of (t.files || [])) {
-        const ext = extFor(f.type, f.name);
-        const generic = !f.name || /^(image|pasted|screenshot|unbenannt|datei|grafik)/i.test(f.name);
-        let base = (f.isImage && generic) ? `shot-${imgIdx}.${ext}` : safeFilename(f.name, ext);
-        let fname = base, n = 2;
-        while (usedNames.has(fname)) fname = suffixName(base, n++);
-        usedNames.add(fname);
-        await writeFile(dir, fname, f.blob);
-        if (f.isImage) imgIdx++;
-        refs.push({ name: fname, isImage: f.isImage });
+    for (const [pid, list] of groups) {
+      const p = getProject(pid);
+      const ticketRoot = await resolveTicketDir(p);
+      for (const t of list) {
+        const dir = await ticketRoot.getDirectoryHandle(`${stamp(t.createdAt)}_${slug(t.title)}`, { create: true });
+        const refs = [];
+        const usedNames = new Set();
+        let imgIdx = 1;
+        for (const f of (t.files || [])) {
+          const ext = extFor(f.type, f.name);
+          const generic = !f.name || /^(image|pasted|screenshot|unbenannt|datei|grafik)/i.test(f.name);
+          let base = (f.isImage && generic) ? `shot-${imgIdx}.${ext}` : safeFilename(f.name, ext);
+          let fname = base, n = 2;
+          while (usedNames.has(fname)) fname = suffixName(base, n++);
+          usedNames.add(fname);
+          await writeFile(dir, fname, f.blob);
+          if (f.isImage) imgIdx++;
+          refs.push({ name: fname, isImage: f.isImage });
+        }
+        await writeFile(dir, 'ticket.md', new Blob([buildMarkdown(t, refs, p.name)], { type: 'text/markdown' }));
+        t.exportedAt = Date.now();
+        selected.delete(t.id);
+        await idbPut(t);
+        written++;
       }
-      await writeFile(dir, 'ticket.md', new Blob([buildMarkdown(t, refs)], { type: 'text/markdown' }));
-      t.exportedAt = Date.now();
-      selected.delete(t.id);
-      await idbPut(t);
-      written++;
+      targets.add(`${p.name}/${p.subdir || 'inbox'}`);
     }
     // Archiv nur mit dem aktuellen Schreibvorgang füllen – ältere entfernen
     if (prevDone.length) {
@@ -483,7 +523,7 @@ async function flush() {
       tickets = tickets.filter((x) => !prevIds.has(x.id));
     }
     render();
-    toast(`<span class="t-accent">${written}</span> Ticket${written === 1 ? '' : 's'} → ${rootHandle.name}/inbox/`, 'ok');
+    toast(`<span class="t-accent">${written}</span> Ticket${written === 1 ? '' : 's'} → ${[...targets].join(', ')}`, 'ok');
   } catch (e) {
     console.error(e);
     render();
@@ -494,12 +534,290 @@ async function flush() {
 async function clearDoneTickets() {
   const done = tickets.filter((t) => t.exportedAt);
   if (!done.length) return;
-  if (!confirm(`${done.length} bereits geschriebene aus der App entfernen? (Die Dateien im inbox/-Ordner bleiben.)`)) return;
+  if (!confirm(`${done.length} bereits geschriebene aus der App entfernen? (Die Dateien im Ticket-Ordner bleiben.)`)) return;
   for (const t of done) await idbDel(t.id);
   tickets = tickets.filter((t) => !t.exportedAt);
   render();
   toast('Aufgeräumt.');
 }
+
+/* ---------- Projekte: Auswahl + Verwaltung ---------- */
+function getProject(id) { return id ? projects.find((p) => p.id === id) || null : null; }
+function activeProject() { return getProject(activeProjectId); }
+function nextProjectColor() {
+  const used = new Set(projects.map((p) => p.color));
+  return PROJECT_COLORS.find((c) => !used.has(c)) || PROJECT_COLORS[projects.length % PROJECT_COLORS.length];
+}
+function persistProjects() {
+  return kvSet('projects', projects.map((p) => ({ id: p.id, name: p.name, handle: p.handle, subdir: p.subdir, color: p.color })));
+}
+
+// Trigger-Button (Composer) an das aktuelle Ziel angleichen
+function syncProjectSelector() {
+  const p = getProject(draft.projectId) || activeProject();
+  if (p) {
+    el.projName.textContent = p.name;
+    el.projDot.style.background = p.color || 'var(--accent)';
+    el.projDot.style.visibility = 'visible';
+    el.projSelect.classList.add('has-project');
+    // Zustand in den zugänglichen Namen (enthält den sichtbaren Text → WCAG 2.5.3)
+    el.projBtn.setAttribute('aria-label', `Zielprojekt: ${p.name}`);
+  } else {
+    el.projName.textContent = projects.length ? 'Projekt wählen' : 'Projekt anlegen';
+    el.projDot.style.visibility = 'hidden';
+    el.projSelect.classList.remove('has-project');
+    el.projBtn.removeAttribute('aria-label');  // sichtbarer Text ist dann der Name
+  }
+}
+
+function selectProject(id) {
+  if (!getProject(id)) return;
+  activeProjectId = id;
+  draft.projectId = id;
+  kvSet('activeProjectId', id);
+  syncProjectSelector();
+  closeProjectPop(true);  // Fokus zurück zum Trigger (Zeile wird aus dem DOM entfernt)
+}
+// Nach einem Rebuild den Fokus auf eine sinnvolle Stelle im offenen Popover setzen
+function focusProjectRow(id) {
+  const pop = el.projPop;
+  if (pop.hidden) return;
+  let btn = null;
+  if (id) {
+    const row = [...pop.querySelectorAll('.proj-row')].find((r) => r.dataset.pid === id);
+    if (row) btn = row.querySelector('.proj-pick');
+  }
+  (btn || pop.querySelector('.proj-add') || el.projBtn).focus();
+}
+
+async function saveProjectForm() {
+  const pop = el.projPop;
+  const name = pop.querySelector('#projFormName').value.trim();
+  const subdir = pop.querySelector('#projFormSub').value.trim() || 'inbox';
+  if (!name) { pop.querySelector('#projFormName').focus(); toast('Projektname fehlt.', 'err'); return; }
+  if (!projForm.handle) { toast('Bitte Repository-Ordner wählen.', 'err'); return; }
+
+  let savedId;
+  if (projForm.editingId) {
+    const p = getProject(projForm.editingId);
+    if (!p) { closeProjectForm(); return; }
+    p.name = name; p.subdir = subdir; p.handle = projForm.handle; p.granted = true;
+    savedId = p.id;
+  } else {
+    const p = { id: uuid(), name, subdir, handle: projForm.handle, color: nextProjectColor(), granted: true };
+    projects.push(p);
+    savedId = p.id;
+    if (!activeProjectId) {
+      activeProjectId = p.id; draft.projectId = p.id;
+      await kvSet('activeProjectId', p.id);
+    }
+  }
+  await persistProjects();
+  closeProjectForm();
+  buildProjectPop();
+  syncProjectSelector();
+  render();
+  focusProjectRow(savedId);  // Fokus auf das gespeicherte Projekt statt ins Leere (M4)
+  toast('Projekt gespeichert.', 'ok');
+}
+
+async function removeProject(id) {
+  const p = getProject(id);
+  if (!p) return;
+  if (!confirm(`Projekt „${p.name}" entfernen?\nTickets bleiben erhalten, verlieren aber die Zuordnung.`)) return;
+  projects = projects.filter((x) => x.id !== id);
+  if (activeProjectId === id) {
+    activeProjectId = projects[0] ? projects[0].id : null;
+    await kvSet('activeProjectId', activeProjectId);
+  }
+  if (draft.projectId === id) draft.projectId = activeProjectId;
+  await persistProjects();
+  buildProjectPop();
+  syncProjectSelector();
+  render();
+  focusProjectRow(activeProjectId);  // Fokus auf verbleibendes Projekt bzw. „hinzufügen" (B3)
+}
+
+/* ---------- Projekt-Popover (Bauen / Öffnen / Schließen) ---------- */
+function buildProjectForm() {
+  const form = document.createElement('div');
+  form.className = 'proj-form';
+  form.hidden = true;
+  form.innerHTML = `
+    <div class="proj-form-title" id="projFormTitle">Neues Projekt</div>
+    <label class="proj-field">
+      <span>Name</span>
+      <input type="text" class="proj-input" id="projFormName" placeholder="z. B. SELAS" autocomplete="off" spellcheck="false" />
+    </label>
+    <div class="proj-field">
+      <span>Repository-Ordner</span>
+      <button type="button" class="proj-folder-btn" id="projFormFolder">Ordner wählen …</button>
+    </div>
+    <label class="proj-field">
+      <span>Ticket-Ordner</span>
+      <input type="text" class="proj-input" id="projFormSub" placeholder="inbox" autocomplete="off" spellcheck="false" />
+      <small class="proj-hint">relativ zum Repo — Standard: inbox</small>
+    </label>
+    <div class="proj-form-actions">
+      <button type="button" class="link" id="projFormCancel">abbrechen</button>
+      <button type="button" class="btn-primary btn-sm" id="projFormSave">Speichern</button>
+    </div>`;
+  form.querySelector('#projFormFolder').addEventListener('click', async () => {
+    const dir = await pickDirectory();
+    if (dir) { projForm.handle = dir; updateFolderBtn(); }
+  });
+  form.querySelector('#projFormCancel').addEventListener('click', () => {
+    const backTo = projForm.editingId;   // vor dem Reset merken
+    closeProjectForm();
+    focusProjectRow(backTo);             // zurück zur Zeile bzw. zum „hinzufügen"-Button
+  });
+  form.querySelector('#projFormSave').addEventListener('click', saveProjectForm);
+  return form;
+}
+
+function buildProjectPop() {
+  const pop = el.projPop;
+  pop.innerHTML = '';
+
+  // Disclosure-Muster: schlichte Liste aus echten Buttons (kein role="menu")
+  const list = document.createElement('ul');
+  list.className = 'proj-list';
+  list.setAttribute('role', 'list');  // Semantik trotz list-style:none erhalten
+  if (!projects.length) {
+    const empty = document.createElement('li');
+    empty.className = 'proj-empty';
+    empty.textContent = 'Noch kein Projekt hinterlegt.';
+    list.appendChild(empty);
+  }
+  projects.forEach((p) => {
+    const active = p.id === draft.projectId;
+    const row = document.createElement('li');
+    row.className = 'proj-row' + (active ? ' active' : '');
+    row.dataset.pid = p.id;
+
+    const pick = document.createElement('button');
+    pick.className = 'proj-pick'; pick.type = 'button';
+    if (active) pick.setAttribute('aria-current', 'true');  // aktuelles Ziel (statt aria-checked)
+    const dot = document.createElement('span');
+    dot.className = 'proj-row-dot'; dot.style.background = p.color || 'var(--accent)';
+    dot.setAttribute('aria-hidden', 'true');
+    const texts = document.createElement('span');
+    texts.className = 'proj-row-texts';
+    const nm = document.createElement('span'); nm.className = 'proj-row-name'; nm.textContent = p.name;
+    const sub = document.createElement('span'); sub.className = 'proj-row-sub';
+    sub.textContent = `${p.handle ? p.handle.name : '—'} / ${p.subdir || 'inbox'}`;
+    texts.append(nm, sub);
+    const status = document.createElement('span');
+    status.className = 'proj-row-status' + (p.granted ? ' ok' : '');
+    status.setAttribute('aria-hidden', 'true');  // Farbe allein reicht nicht → Text folgt
+    status.title = p.granted ? 'verbunden' : 'wird beim Schreiben freigegeben';
+    const srStatus = document.createElement('span');
+    srStatus.className = 'sr-only';
+    srStatus.textContent = p.granted ? ' — verbunden' : ' — nicht verbunden';
+    pick.append(dot, texts, status, srStatus);
+    pick.addEventListener('click', () => selectProject(p.id));
+
+    const edit = document.createElement('button');
+    edit.className = 'proj-mini'; edit.type = 'button';
+    edit.title = 'bearbeiten';
+    edit.setAttribute('aria-label', `Projekt „${p.name}" bearbeiten`);
+    edit.innerHTML = '<span aria-hidden="true">✎</span>';
+    edit.addEventListener('click', (e) => { e.stopPropagation(); openProjectForm(p.id); });
+
+    const del = document.createElement('button');
+    del.className = 'proj-mini danger'; del.type = 'button';
+    del.title = 'entfernen';
+    del.setAttribute('aria-label', `Projekt „${p.name}" entfernen`);
+    del.innerHTML = '<span aria-hidden="true">🗑</span>';
+    del.addEventListener('click', (e) => { e.stopPropagation(); removeProject(p.id); });
+
+    row.append(pick, edit, del);
+    list.appendChild(row);
+  });
+
+  const add = document.createElement('button');
+  add.className = 'proj-add'; add.type = 'button';
+  add.innerHTML = '<span class="proj-add-plus" aria-hidden="true">＋</span> Projekt hinzufügen';
+  add.addEventListener('click', () => openProjectForm(null));
+
+  pop.append(list, add, buildProjectForm());
+  if (!pop.hidden) positionProjectPop();
+}
+function refreshProjectPop() { if (!el.projPop.hidden) buildProjectPop(); }
+
+function updateFolderBtn() {
+  const btn = el.projPop.querySelector('#projFormFolder');
+  if (!btn) return;
+  btn.textContent = projForm.handle ? `📁 ${projForm.handle.name}` : 'Ordner wählen …';
+  // expliziter, kontextreicher Name (Emoji ist nur Dekor) — V1/B4
+  btn.setAttribute('aria-label', projForm.handle ? `Repository-Ordner: ${projForm.handle.name}` : 'Repository-Ordner wählen');
+  btn.classList.toggle('chosen', !!projForm.handle);
+}
+function openProjectForm(id) {
+  const p = id ? getProject(id) : null;
+  projForm = { editingId: id || null, handle: p ? p.handle : null };
+  const pop = el.projPop;
+  pop.querySelector('#projFormTitle').textContent = p ? 'Projekt bearbeiten' : 'Neues Projekt';
+  pop.querySelector('#projFormName').value = p ? p.name : '';
+  pop.querySelector('#projFormSub').value = p ? (p.subdir || '') : '';
+  updateFolderBtn();
+  pop.querySelector('.proj-form').hidden = false;
+  pop.querySelector('#projFormName').focus();
+  positionProjectPop();
+}
+function closeProjectForm() {
+  const form = el.projPop.querySelector('.proj-form');
+  if (form) form.hidden = true;
+  projForm = { editingId: null, handle: null };
+  positionProjectPop();
+}
+
+function onDocClickProj(e) { if (!el.projSelect.contains(e.target)) closeProjectPop(); }
+function onEscProj(e) { if (e.key === 'Escape') { e.stopPropagation(); closeProjectPop(true); } }
+// Tabbt der Fokus aus dem Popover heraus → schließen. relatedTarget=null (z. B. der
+// native Ordner-Dialog nimmt den Fokus) NICHT schließen, sonst geht das Formular verloren.
+function onFocusOutProj(e) {
+  if (e.relatedTarget && !el.projSelect.contains(e.relatedTarget)) closeProjectPop();
+}
+// Popover ist position:fixed → am Trigger ausrichten, an Viewport-Rändern clampen
+function positionProjectPop() {
+  const pop = el.projPop;
+  if (pop.hidden) return;
+  const r = el.projBtn.getBoundingClientRect();
+  const w = pop.offsetWidth || 320;
+  const h = pop.offsetHeight || 0;
+  let left = Math.min(r.left, window.innerWidth - w - 8);
+  if (left < 8) left = 8;
+  let top = r.bottom + 8;
+  if (top + h > window.innerHeight - 8 && r.top - 8 - h > 8) top = r.top - 8 - h;
+  pop.style.left = left + 'px';
+  pop.style.top = Math.max(8, top) + 'px';
+}
+function openProjectPop() {
+  buildProjectPop();
+  el.projPop.hidden = false;
+  positionProjectPop();
+  el.projBtn.setAttribute('aria-expanded', 'true');
+  document.addEventListener('click', onDocClickProj, true);
+  document.addEventListener('keydown', onEscProj, true);
+  el.projSelect.addEventListener('focusout', onFocusOutProj);
+  window.addEventListener('resize', positionProjectPop);
+  window.addEventListener('scroll', positionProjectPop, true);
+}
+function closeProjectPop(focusTrigger) {
+  if (el.projPop.hidden) return;
+  // erst Listener entfernen, damit das Ausblenden keinen Spuren-focusout auslöst
+  document.removeEventListener('click', onDocClickProj, true);
+  document.removeEventListener('keydown', onEscProj, true);
+  el.projSelect.removeEventListener('focusout', onFocusOutProj);
+  window.removeEventListener('resize', positionProjectPop);
+  window.removeEventListener('scroll', positionProjectPop, true);
+  el.projPop.hidden = true;
+  el.projBtn.setAttribute('aria-expanded', 'false');
+  closeProjectForm();
+  if (focusTrigger) el.projBtn.focus();  // Fokus-Return nur bei Tastatur (Esc/Auswahl)
+}
+function toggleProjectPop() { if (el.projPop.hidden) openProjectPop(); else closeProjectPop(true); }
 
 /* ---------- Events ---------- */
 function wire() {
@@ -539,7 +857,7 @@ function wire() {
     if (found) e.preventDefault();
   });
 
-  el.connectBtn.addEventListener('click', connectFolder);
+  el.projBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleProjectPop(); });
   el.flushBtn.addEventListener('click', flush);
   el.selectAll.addEventListener('click', selectAllToggle);
   el.selClear.addEventListener('click', clearSelection);
@@ -563,12 +881,39 @@ async function init() {
       if (!t.files) t.files = t.images || [];
       t.files.forEach((f) => { if (f.isImage === undefined) f.isImage = (f.type || '').startsWith('image/'); });
     });
-    const saved = await kvGet('rootHandle');
-    if (saved) {
-      rootHandle = saved;
-      if (await verifyPermission(saved, false)) setConnected(saved.name);
+
+    // Projekte laden — inkl. Migration vom alten Einzel-Ordner (rootHandle)
+    let stored = await kvGet('projects');
+    if (!stored) {
+      const oldRoot = await kvGet('rootHandle');
+      if (oldRoot) {
+        stored = [{ id: uuid(), name: oldRoot.name, handle: oldRoot, subdir: 'inbox', color: PROJECT_COLORS[0] }];
+        await kvSet('projects', stored);
+      } else {
+        stored = [];
+      }
+    }
+    projects = stored.map((p) => ({ ...p, subdir: p.subdir || 'inbox', color: p.color || PROJECT_COLORS[0], granted: false }));
+
+    activeProjectId = await kvGet('activeProjectId');
+    if (!getProject(activeProjectId)) activeProjectId = projects[0] ? projects[0].id : null;
+
+    // Berechtigungen still prüfen (ohne Prompt)
+    for (const p of projects) { try { p.granted = await verifyPermission(p.handle, false); } catch (_) {} }
+
+    // Tickets ohne Zuordnung dem aktiven Projekt zuschlagen (eindeutig nach Migration)
+    if (activeProjectId) {
+      for (const t of tickets) {
+        if (t.projectId === undefined || t.projectId === null) {
+          t.projectId = activeProjectId;
+          await idbPut(t);
+        }
+      }
     }
   } catch (e) { console.error(e); }
+
+  draft.projectId = activeProjectId;
+  syncProjectSelector();
   render();
   el.title.focus();
 
